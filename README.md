@@ -1,1 +1,1 @@
-# nix-fullwayland-multiseat
+# nixos-fullwayland-multiseat
