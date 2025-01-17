@@ -1,0 +1,191 @@
+From ca8730e6765c4daaeb9145263aadd31a98ff5986 Mon Sep 17 00:00:00 2001
+From: Daniel Shiposha <mrshiposha@gmail.com>
+Date: Sun, 24 Sep 2023 20:31:44 +0200
+Subject: [PATCH] feat: multiseat support
+
+---
+ greetd/src/config/mod.rs        | 8 ++++++++
+ greetd/src/context.rs           | 5 +++++
+ greetd/src/server.rs            | 1 +
+ greetd/src/session/interface.rs | 2 ++
+ greetd/src/session/worker.rs    | 8 ++++++--
+ 5 files changed, 22 insertions(+), 2 deletions(-)
+
+diff --git a/greetd/src/config/mod.rs b/greetd/src/config/mod.rs
+index e77a155..1ae0109 100644
+--- a/greetd/src/config/mod.rs
++++ b/greetd/src/config/mod.rs
+@@ -41,6 +41,7 @@ pub struct ConfigGeneral {
+     pub source_profile: bool,
+     pub runfile: String,
+     pub service: String,
++    pub seat: String,
+ }
+ 
+ impl Default for ConfigGeneral {
+@@ -49,6 +50,7 @@ impl Default for ConfigGeneral {
+             source_profile: true,
+             runfile: RUNFILE.to_string(),
+             service: GENERAL_SERVICE.to_string(),
++            seat: "seat0".to_string(),
+         }
+     }
+ }
+@@ -127,6 +129,10 @@ fn parse_new_config(config: &HashMap<&str, HashMap<&str, &str>>) -> Result<Confi
+             let service = maybe_unquote(servicestr)
+                 .map_err(|e| format!("unable to read general.service: {}", e))?;
+ 
++            let seatstr = section.get("seat").unwrap_or(&"seat0");
++            let seat = maybe_unquote(seatstr)
++                .map_err(|e| format!("unable to read default_session.seat: {}", e))?;
++
+             ConfigGeneral {
+                 source_profile: section
+                     .get("source_profile")
+@@ -135,6 +141,7 @@ fn parse_new_config(config: &HashMap<&str, HashMap<&str, &str>>) -> Result<Confi
+                     .map_err(|e| format!("could not parse source_profile: {}", e))?,
+                 runfile,
+                 service,
++                seat,
+             }
+         }
+ 
+@@ -456,6 +463,7 @@ runfile = \"/path/to/greetd.state\"
+                     source_profile: false,
+                     runfile: "/path/to/greetd.state".to_string(),
+                     service: "greetd".to_string(),
++                    seat: "seat0".to_string(),
+                 },
+                 initial_session: None,
+             }
+diff --git a/greetd/src/context.rs b/greetd/src/context.rs
+index 04e12be..f3cfe1a 100644
+--- a/greetd/src/context.rs
++++ b/greetd/src/context.rs
+@@ -43,6 +43,7 @@ pub struct Context {
+     greeter_user: String,
+     greeter_service: String,
+     pam_service: String,
++    seat: String,
+     term_mode: TerminalMode,
+     source_profile: bool,
+     runfile: String,
+@@ -55,6 +56,7 @@ impl Context {
+         greeter_user: String,
+         greeter_service: String,
+         pam_service: String,
++        seat: String,
+         term_mode: TerminalMode,
+         source_profile: bool,
+         runfile: String,
+@@ -70,6 +72,7 @@ impl Context {
+             greeter_user,
+             greeter_service,
+             pam_service,
++            seat,
+             term_mode,
+             source_profile,
+             runfile,
+@@ -93,6 +96,7 @@ impl Context {
+                 service,
+                 class,
+                 user,
++                &self.seat,
+                 false,
+                 &self.term_mode,
+                 self.source_profile,
+@@ -199,6 +203,7 @@ impl Context {
+                 &self.pam_service,
+                 SessionClass::User,
+                 &username,
++                &self.seat,
+                 true,
+                 &self.term_mode,
+                 self.source_profile,
+diff --git a/greetd/src/server.rs b/greetd/src/server.rs
+index 61f841c..4c5fe67 100644
+--- a/greetd/src/server.rs
++++ b/greetd/src/server.rs
+@@ -239,6 +239,7 @@ pub async fn main(config: Config) -> Result<(), Error> {
+         config.file.default_session.user,
+         greeter_service.to_string(),
+         service.to_string(),
++        config.file.general.seat.clone(),
+         term_mode.clone(),
+         config.file.general.source_profile,
+         config.file.general.runfile,
+diff --git a/greetd/src/session/interface.rs b/greetd/src/session/interface.rs
+index f1d3f04..83488fd 100644
+--- a/greetd/src/session/interface.rs
++++ b/greetd/src/session/interface.rs
+@@ -137,6 +137,7 @@ impl Session {
+         service: &str,
+         class: SessionClass,
+         user: &str,
++        seat: &str,
+         authenticate: bool,
+         term_mode: &TerminalMode,
+         source_profile: bool,
+@@ -146,6 +147,7 @@ impl Session {
+             service: service,
+             class: class,
+             user: user,
++            seat: seat,
+             authenticate,
+             tty: term_mode.clone(),
+             source_profile,
+diff --git a/greetd/src/session/worker.rs b/greetd/src/session/worker.rs
+index eec682b..dbe4de0 100644
+--- a/greetd/src/session/worker.rs
++++ b/greetd/src/session/worker.rs
+@@ -52,6 +52,7 @@ pub enum ParentToSessionChild<'a> {
+         service: &'a str,
+         class: SessionClass,
+         user: &'a str,
++        seat: &'a str,
+         authenticate: bool,
+         tty: TerminalMode,
+         source_profile: bool,
+@@ -100,12 +101,13 @@ impl SessionChildToParent {
+ /// started by Session::start.
+ fn worker(sock: &UnixDatagram) -> Result<(), Error> {
+     let mut data = [0; 10240];
+-    let (service, class, user, authenticate, tty, source_profile, listener_path) =
++    let (service, class, user, seat, authenticate, tty, source_profile, listener_path) =
+         match ParentToSessionChild::recv(sock, &mut data)? {
+             ParentToSessionChild::InitiateLogin {
+                 service,
+                 class,
+                 user,
++                seat,
+                 authenticate,
+                 tty,
+                 source_profile,
+@@ -114,6 +116,7 @@ fn worker(sock: &UnixDatagram) -> Result<(), Error> {
+                 service,
+                 class,
+                 user,
++                seat,
+                 authenticate,
+                 tty,
+                 source_profile,
+@@ -143,6 +146,8 @@ fn worker(sock: &UnixDatagram) -> Result<(), Error> {
+         pam.putenv(&format!("GREETD_SOCK={}", &listener_path))?;
+     }
+ 
++    pam.putenv(&format!("XDG_SEAT={}", seat))?;
++
+     // Fetch our arguments from the parent.
+     let (env, cmd) = match ParentToSessionChild::recv(sock, &mut data)? {
+         ParentToSessionChild::Args { env, cmd } => (env, cmd),
+@@ -203,7 +208,6 @@ fn worker(sock: &UnixDatagram) -> Result<(), Error> {
+     // specifically, pam_systemd.so), as well as make it easier to gather
+     // and set all environment variables later.
+     let prepared_env = [
+-        "XDG_SEAT=seat0".to_string(),
+         format!("XDG_SESSION_CLASS={}", class.as_str()),
+         format!("USER={}", user.name),
+         format!("LOGNAME={}", user.name),
+-- 
+2.47.0
+
