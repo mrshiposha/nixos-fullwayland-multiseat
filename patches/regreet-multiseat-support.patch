@@ -1,19 +1,19 @@
-From 8c224cd5a83c2be342a60b44bb18cbf18bc589b7 Mon Sep 17 00:00:00 2001
-From: Daniel Shiposha <mrshiposha@gmail.com>
-Date: Wed, 13 Dec 2023 20:04:31 +0100
-Subject: [PATCH] feat: multiseat logs and cache
+From 5bd5ff5d209c6652d9304eeca67bf6759d71d4f8 Mon Sep 17 00:00:00 2001
+From: Daniel Shiposha <dev@shiposha.com>
+Date: Sat, 25 Jan 2025 21:21:31 +0100
+Subject: [PATCH] feat: multiseat log/cache
 
 ---
  src/cache/mod.rs | 14 ++++++++++----
  src/constants.rs |  8 ++------
- src/main.rs      | 19 ++++++++++++++++---
- 3 files changed, 28 insertions(+), 13 deletions(-)
+ src/main.rs      | 25 ++++++++++++++++++++-----
+ 3 files changed, 32 insertions(+), 15 deletions(-)
 
 diff --git a/src/cache/mod.rs b/src/cache/mod.rs
-index d85571f..7c5cd65 100644
+index 8062825..a7aff6d 100644
 --- a/src/cache/mod.rs
 +++ b/src/cache/mod.rs
-@@ -8,13 +8,14 @@ mod lru;
+@@ -8,12 +8,13 @@ mod lru;
  
  use std::fs::{create_dir_all, write};
  use std::num::NonZeroUsize;
@@ -21,7 +21,6 @@ index d85571f..7c5cd65 100644
 +use std::path::{Path, PathBuf};
  
  use serde::{Deserialize, Serialize};
- use tracing::info;
  
  use self::lru::LruCache;
 -use crate::constants::CACHE_PATH;
@@ -30,7 +29,7 @@ index d85571f..7c5cd65 100644
  use crate::tomlutils::{load_toml, TomlFileResult};
  
  /// Limit to the size of the user to last-used session mapping.
-@@ -41,7 +42,7 @@ impl Default for Cache {
+@@ -40,7 +41,7 @@ impl Default for Cache {
  impl Cache {
      /// Load the cache file from disk.
      pub fn new() -> Self {
@@ -39,7 +38,7 @@ index d85571f..7c5cd65 100644
          // Make sure that the LRU can contain the needed amount of mappings.
          cache
              .user_to_last_sess
-@@ -49,9 +50,14 @@ impl Cache {
+@@ -48,9 +49,14 @@ impl Cache {
          cache
      }
  
@@ -56,40 +55,63 @@ index d85571f..7c5cd65 100644
              // Create the cache directory.
              if let Some(cache_dir) = cache_path.parent() {
 diff --git a/src/constants.rs b/src/constants.rs
-index 7fed1d6..e3d16e2 100644
+index abacaef..01af0d8 100644
 --- a/src/constants.rs
 +++ b/src/constants.rs
-@@ -32,14 +32,10 @@ pub const CONFIG_PATH: &str = concatcp!(GREETD_CONFIG_DIR, "/", GREETER_NAME, ".
+@@ -30,14 +30,10 @@ pub const CONFIG_PATH: &str = concatcp!(GREETD_CONFIG_DIR, "/", GREETER_NAME, ".
  pub const CSS_PATH: &str = concatcp!(GREETD_CONFIG_DIR, "/", GREETER_NAME, ".css");
  
  /// The directory for system cache files
--const CACHE_DIR: &str = env_or!("CACHE_DIR", concatcp!("/var/cache/", GREETER_NAME));
+-const CACHE_DIR: &str = env_or!("STATE_DIR", concatcp!("/var/lib/", GREETER_NAME));
 -/// Path to the cache file
--pub const CACHE_PATH: &str = concatcp!(CACHE_DIR, "/cache.toml");
-+pub const CACHE_DIR: &str = env_or!("CACHE_DIR", concatcp!("/var/cache/", GREETER_NAME));
+-pub const CACHE_PATH: &str = concatcp!(CACHE_DIR, "/state.toml");
++pub const CACHE_DIR: &str = env_or!("STATE_DIR", concatcp!("/var/lib/", GREETER_NAME));
  
  /// The directory for system log files
 -const LOG_DIR: &str = env_or!("LOG_DIR", concatcp!("/var/log/", GREETER_NAME));
--/// Path to the cache file
+-/// Path to the log file
 -pub const LOG_PATH: &str = concatcp!(LOG_DIR, "/log");
 +pub const LOG_DIR: &str = env_or!("LOG_DIR", concatcp!("/var/log/", GREETER_NAME));
  
  /// Default command for rebooting
  pub const REBOOT_CMD: &str = env_or!("REBOOT_CMD", "reboot");
 diff --git a/src/main.rs b/src/main.rs
-index 3d9a417..5da63a8 100644
+index 30028a4..9a20465 100644
 --- a/src/main.rs
 +++ b/src/main.rs
-@@ -19,7 +19,7 @@ use file_rotate::{compression::Compression, suffix::AppendCount, ContentLimit, F
- use tracing_appender::{non_blocking, non_blocking::WorkerGuard};
- use tracing_subscriber::{filter::LevelFilter, fmt::time::OffsetTime};
+@@ -22,7 +22,7 @@ use tracing_subscriber::{
+     filter::LevelFilter, fmt::layer, fmt::time::OffsetTime, layer::SubscriberExt,
+ };
  
 -use crate::constants::{APP_ID, CONFIG_PATH, CSS_PATH, LOG_PATH};
 +use crate::constants::{APP_ID, CONFIG_PATH, CSS_PATH, LOG_DIR};
  use crate::gui::{Greeter, GreeterInit};
  
- const MAX_LOG_FILES: usize = 3;
-@@ -63,9 +63,19 @@ fn main() {
+ #[macro_use]
+@@ -53,8 +53,8 @@ enum LogLevel {
+ #[command(author, version, about)]
+ struct Args {
+     /// The path to the log file
+-    #[arg(short = 'l', long, value_name = "PATH", default_value = LOG_PATH)]
+-    logs: PathBuf,
++    #[arg(short = 'l', long, value_name = "PATH")]
++    logs: Option<PathBuf>,
+ 
+     /// The verbosity level of the logs
+     #[arg(short = 'L', long, value_name = "LEVEL", default_value = "info")]
+@@ -79,8 +79,10 @@ struct Args {
+ 
+ fn main() {
+     let args = Args::parse();
++    let logs = args.logs.unwrap_or_else(default_log_path);
++
+     // Keep the guard alive till the end of the function, since logging depends on this.
+-    let _guard = init_logging(&args.logs, &args.log_level, args.verbose);
++    let _guard = init_logging(&logs, &args.log_level, args.verbose);
+ 
+     let app = relm4::RelmApp::new(APP_ID);
+     app.with_args(vec![]).run_async::<Greeter>(GreeterInit {
+@@ -90,6 +92,15 @@ fn main() {
      });
  }
  
@@ -97,31 +119,27 @@ index 3d9a417..5da63a8 100644
 +    std::env::var("XDG_SEAT").expect("XDG_SEAT env var must present")
 +}
 +
-+fn log_path() -> PathBuf {
++fn default_log_path() -> PathBuf {
 +    let log_dir = &Path::new(LOG_DIR).join(seat());
 +    log_dir.join("log")
 +}
 +
  /// Initialize the log file with file rotation.
- fn setup_log_file() -> IoResult<FileRotate<AppendCount>> {
--    let log_path = Path::new(LOG_PATH);
-+    let log_path = &log_path();
-+
+ fn setup_log_file(log_path: &Path) -> IoResult<FileRotate<AppendCount>> {
      if !log_path.exists() {
-         if let Some(log_dir) = log_path.parent() {
-             create_dir_all(log_dir)?;
-@@ -118,7 +128,10 @@ fn init_logging(log_level: &LogLevel) -> WorkerGuard {
-             guard
-         }
-         Err(err) => {
--            println!("ERROR: Couldn't create log file '{LOG_PATH}': {err}");
-+            println!(
-+                "ERROR: Couldn't create log file '{}': {err}",
-+                log_path().display()
-+            );
+@@ -165,7 +176,11 @@ fn init_logging(log_path: &Path, log_level: &LogLevel, stdout: bool) -> Vec<Work
              let (file, guard) = non_blocking(std::io::stdout());
-             logger.with_writer(file).init();
-             guard
+             guards.push(guard);
+             builder.with_writer(file).init();
+-            tracing::error!("Couldn't create log file '{LOG_PATH}': {file_err}");
++            tracing::error!(
++                "Couldn't create log file '{}': {}",
++                log_path.display(),
++                file_err
++            );
+         }
+     };
+ 
 -- 
 2.47.0
 
