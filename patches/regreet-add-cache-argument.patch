@@ -1,0 +1,165 @@
+From 739bcae6f0f2f738feea17bc1425bc04f6efd2bb Mon Sep 17 00:00:00 2001
+From: Daniel Shiposha <dev@shiposha.com>
+Date: Sat, 25 Jan 2025 20:57:31 +0100
+Subject: [PATCH] feat: add cache argument
+
+---
+ src/cache/mod.rs     | 20 ++++++++++++--------
+ src/gui/component.rs |  3 ++-
+ src/gui/model.rs     |  6 +++---
+ src/main.rs          |  7 ++++++-
+ 4 files changed, 23 insertions(+), 13 deletions(-)
+
+diff --git a/src/cache/mod.rs b/src/cache/mod.rs
+index 8062825..bb8f709 100644
+--- a/src/cache/mod.rs
++++ b/src/cache/mod.rs
+@@ -8,7 +8,7 @@ mod lru;
+ 
+ use std::fs::{create_dir_all, write};
+ use std::num::NonZeroUsize;
+-use std::path::Path;
++use std::path::PathBuf;
+ 
+ use serde::{Deserialize, Serialize};
+ 
+@@ -26,6 +26,9 @@ pub struct Cache {
+     last_user: Option<String>,
+     /// The last-used session for each user
+     user_to_last_sess: LruCache<String, String>,
++
++    #[serde(skip)]
++    path: PathBuf,
+ }
+ 
+ impl Default for Cache {
+@@ -33,34 +36,35 @@ impl Default for Cache {
+         Self {
+             last_user: None,
+             user_to_last_sess: LruCache::new(CACHE_LIMIT),
++            path: PathBuf::from(CACHE_PATH),
+         }
+     }
+ }
+ 
+ impl Cache {
+     /// Load the cache file from disk.
+-    pub fn new() -> Self {
+-        let mut cache: Self = load_toml(CACHE_PATH);
++    pub fn new(path: PathBuf) -> Self {
++        let mut cache: Self = load_toml(&path);
+         // Make sure that the LRU can contain the needed amount of mappings.
+         cache
+             .user_to_last_sess
+             .resize(NonZeroUsize::new(CACHE_LIMIT).expect("Cache limit cannot be zero"));
+-        cache
++
++        Self { path, ..cache }
+     }
+ 
+     /// Save the cache file to disk.
+     pub fn save(&self) -> TomlFileResult<()> {
+-        let cache_path = Path::new(CACHE_PATH);
+-        if !cache_path.exists() {
++        if !self.path.exists() {
+             // Create the cache directory.
+-            if let Some(cache_dir) = cache_path.parent() {
++            if let Some(cache_dir) = self.path.parent() {
+                 info!("Creating missing cache directory: {}", cache_dir.display());
+                 create_dir_all(cache_dir)?;
+             };
+         }
+ 
+         info!("Saving cache to disk");
+-        write(cache_path, toml::to_string_pretty(self)?)?;
++        write(&self.path, toml::to_string_pretty(self)?)?;
+         Ok(())
+     }
+ 
+diff --git a/src/gui/component.rs b/src/gui/component.rs
+index 6b210dd..4cb91ac 100644
+--- a/src/gui/component.rs
++++ b/src/gui/component.rs
+@@ -99,6 +99,7 @@ fn setup_users_sessions(model: &Greeter, widgets: &GreeterWidgets) {
+ /// The info required to initialize the greeter
+ pub struct GreeterInit {
+     pub config_path: PathBuf,
++    pub cache_path: PathBuf,
+     pub css_path: PathBuf,
+     pub demo: bool,
+ }
+@@ -330,7 +331,7 @@ impl AsyncComponent for Greeter {
+         root: Self::Root,
+         sender: AsyncComponentSender<Self>,
+     ) -> AsyncComponentParts<Self> {
+-        let mut model = Self::new(&input.config_path, input.demo).await;
++        let mut model = Self::new(&input.config_path, input.cache_path.clone(), input.demo).await;
+         let widgets = view_output!();
+ 
+         // Make the info bar permanently visible, since it was made invisible during init. The
+diff --git a/src/gui/model.rs b/src/gui/model.rs
+index e9415da..c2ea3da 100644
+--- a/src/gui/model.rs
++++ b/src/gui/model.rs
+@@ -8,7 +8,7 @@
+ 
+ //! The main logic for the greeter
+ 
+-use std::path::Path;
++use std::path::{Path, PathBuf};
+ use std::process::Command;
+ use std::sync::Arc;
+ use std::time::Duration;
+@@ -99,7 +99,7 @@ pub struct Greeter {
+ }
+ 
+ impl Greeter {
+-    pub(super) async fn new(config_path: &Path, demo: bool) -> Self {
++    pub(super) async fn new(config_path: &Path, cache_path: PathBuf, demo: bool) -> Self {
+         let config = Config::new(config_path);
+ 
+         let updates = Updates {
+@@ -128,7 +128,7 @@ impl Greeter {
+         Self {
+             greetd_client,
+             sys_util: SysUtil::new(&config).expect("Couldn't read available users and sessions"),
+-            cache: Cache::new(),
++            cache: Cache::new(cache_path),
+             sess_info: None,
+             config,
+             updates,
+diff --git a/src/main.rs b/src/main.rs
+index 30028a4..7b54691 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -22,7 +22,7 @@ use tracing_subscriber::{
+     filter::LevelFilter, fmt::layer, fmt::time::OffsetTime, layer::SubscriberExt,
+ };
+ 
+-use crate::constants::{APP_ID, CONFIG_PATH, CSS_PATH, LOG_PATH};
++use crate::constants::{APP_ID, CACHE_PATH, CONFIG_PATH, CSS_PATH, LOG_PATH};
+ use crate::gui::{Greeter, GreeterInit};
+ 
+ #[macro_use]
+@@ -60,6 +60,10 @@ struct Args {
+     #[arg(short = 'L', long, value_name = "LEVEL", default_value = "info")]
+     log_level: LogLevel,
+ 
++    /// The path to the cache file
++    #[arg(short = 'c', long, value_name = "PATH", default_value = CACHE_PATH)]
++    cache: PathBuf,
++
+     /// Output all logs to stdout
+     #[arg(short, long)]
+     verbose: bool,
+@@ -85,6 +89,7 @@ fn main() {
+     let app = relm4::RelmApp::new(APP_ID);
+     app.with_args(vec![]).run_async::<Greeter>(GreeterInit {
+         config_path: args.config,
++        cache_path: args.cache,
+         css_path: args.style,
+         demo: args.demo,
+     });
+-- 
+2.47.0
+

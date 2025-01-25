@@ -20,7 +20,7 @@
         patches = old.patches ++ [ ./patches/greetd-multiseat-support.patch ];
       });
       regreet = pkgs.greetd.regreet.overrideAttrs (old: {
-        patches = old.patches ++ [ ./patches/regreet-multiseat-support.patch ];
+        patches = old.patches ++ [ ./patches/regreet-add-cache-argument.patch ];
       });
     };
   };
