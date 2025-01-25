@@ -39,13 +39,15 @@ in
 
     services.udev.packages = builtins.attrValues (
       builtins.mapAttrs
-        (seat: options: pkgs.writeTextFile {
-          name = "15-${seat}.rules";
+        (seat: options:
+        let ruleFile = "15-${seat}.rules"; in pkgs.writeTextFile {
+          name = ruleFile;
           text = strings.concatLines (
             builtins.map
               (device: ''SUBSYSTEM=="${device.subsystem}", KERNELS=="${device.pci}", ENV{ID_SEAT}="${seat}"'')
               options.devices
           );
+          destination = "/etc/udev/rules.d/${ruleFile}";
         })
         cfg.extraSeats
     );

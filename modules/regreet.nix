@@ -172,7 +172,7 @@ in
         builtins.map
           (seat: {
             "/var/log/regreet/${seat}".d = defaultConfig;
-            "/var/cache/regreet/${seat}".d = defaultConfig;
+            "/var/lib/regreet/${seat}".d = defaultConfig;
           })
           seats
       );
