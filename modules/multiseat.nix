@@ -12,6 +12,7 @@ let
     };
     kernel = mkOption {
       type = nullOr str;
+      default = null;
     };
   };
   seatOptions = {
