@@ -48,7 +48,7 @@ in
           name = ruleFile;
           text = strings.concatLines (
             builtins.map
-              (device: let kernel = strings.optionalString (device.kernel != null) '' KERNEL=="${device.kernel}"''; in
+              (device: let kernel = strings.optionalString (device.kernel != null) '', KERNEL=="${device.kernel}"''; in
                 ''SUBSYSTEM=="${device.subsystem}", KERNELS=="${device.pci}"${kernel}, ENV{ID_SEAT}="${seat}"'')
               options.devices
           );
