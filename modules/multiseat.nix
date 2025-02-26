@@ -10,6 +10,9 @@ let
     pci = mkOption {
       type = str;
     };
+    kernel = mkOption {
+      type = nullOr str;
+    };
   };
   seatOptions = {
     devices = mkOption {
@@ -44,7 +47,8 @@ in
           name = ruleFile;
           text = strings.concatLines (
             builtins.map
-              (device: ''SUBSYSTEM=="${device.subsystem}", KERNELS=="${device.pci}", ENV{ID_SEAT}="${seat}"'')
+              (device: let kernel = strings.optionalString (device.kernel != null) " KERNEL==${device.kernel}"; in
+                ''SUBSYSTEM=="${device.subsystem}", KERNELS=="${device.pci}"${kernel}, ENV{ID_SEAT}="${seat}"'')
               options.devices
           );
           destination = "/etc/udev/rules.d/${ruleFile}";
