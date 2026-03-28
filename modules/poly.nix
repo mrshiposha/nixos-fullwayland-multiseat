@@ -9,10 +9,9 @@ let
 in
 {
   options.security.poly = {
-    enable = mkOption {
-      type = bool;
-      default = false;
-    };
+    enable = mkEnableOption "poly";
+
+    enableDebug = mkEnableOption "poly debug";
 
     services = mkOption {
       type = listOf str;
@@ -64,46 +63,41 @@ in
 
   config = mkIf cfg.enable {
     systemd.tmpfiles.rules = lists.unique (
-      map
-        (instance:
-          let sourceParent = toString (dirOf instance.source);
-          in if sourceParent == "/"
-          then ""
-          else "d ${sourceParent} 000 root root -")
-        cfg.instances
+      map (
+        instance:
+        let
+          sourceParent = toString (dirOf instance.source);
+        in
+        if sourceParent == "/" then "" else "d ${sourceParent} 000 root root -"
+      ) cfg.instances
     );
 
-    security.pam.services = listToAttrs
-      (map
-        (service: {
-          name = service;
-          value = {
-            text = mkDefault (
-              mkAfter "session required pam_namespace.so\n"
-            );
-          };
-        })
-        cfg.services
-      );
+    security.pam.services = listToAttrs (
+      map (service: {
+        name = service;
+        value = {
+          text =
+            let
+              dbg = if cfg.enableDebug then " debug" else "";
+            in
+            mkDefault (mkAfter "session required pam_namespace.so${dbg}\n");
+        };
+      }) cfg.services
+    );
 
     environment.etc = {
-      "security/namespace.conf".text =
-        strings.concatLines (
-          builtins.map
-            (options:
-              let
-                ignoreFor = concatStringsSep "," options.ignoreFor;
-                owner = if options.owner == null
-                  then ""
-                  else options.owner;
-                group = if options.group == null
-                  then ""
-                  else options.group;
-                createOptions = "create=${options.mode},${owner},${group}";
-              in
-              "${options.mount}    ${toString options.source}    ${options.type}:${createOptions}    ${ignoreFor}")
-            cfg.instances
-        );
+      "security/namespace.conf".text = strings.concatLines (
+        builtins.map (
+          options:
+          let
+            ignoreFor = concatStringsSep "," options.ignoreFor;
+            owner = if options.owner == null then "" else options.owner;
+            group = if options.group == null then "" else options.group;
+            createOptions = "create=${options.mode},${owner},${group}";
+          in
+          "${options.mount}    ${toString options.source}    ${options.type}:${createOptions}    ${ignoreFor}"
+        ) cfg.instances
+      );
     };
   };
 }
