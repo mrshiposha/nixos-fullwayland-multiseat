@@ -86,7 +86,7 @@ in
     );
 
     environment.etc = {
-      "security/namespace.conf".text = strings.concatLines (
+      "security/namespace.d/multiseat.conf".text = strings.concatLines (
         builtins.map (
           options:
           let
