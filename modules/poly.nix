@@ -1,4 +1,9 @@
-{ config, lib, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 with builtins;
 with lib;
 with lib.types;
@@ -85,19 +90,26 @@ in
       }) cfg.services
     );
 
-    environment.etc = {
-      "security/namespace.d/multiseat.conf".text = strings.concatLines (
-        builtins.map (
-          options:
-          let
-            ignoreFor = concatStringsSep "," options.ignoreFor;
-            owner = if options.owner == null then "" else options.owner;
-            group = if options.group == null then "" else options.group;
-            createOptions = "create=${options.mode},${owner},${group}";
-          in
-          "${options.mount}    ${toString options.source}    ${options.type}:${createOptions}    ${ignoreFor}"
-        ) cfg.instances
-      );
-    };
+    security.pam.package =
+      let
+        multiseat-conf = strings.concatLines (
+          builtins.map (
+            options:
+            let
+              ignoreFor = concatStringsSep "," options.ignoreFor;
+              owner = if options.owner == null then "" else options.owner;
+              group = if options.group == null then "" else options.group;
+              createOptions = "create=${options.mode},${owner},${group}";
+            in
+            "${options.mount}    ${toString options.source}    ${options.type}:${createOptions}    ${ignoreFor}"
+          ) cfg.instances
+        );
+        multiseat-conf-file = pkgs.writeText "multiseat-poly-conf" multiseat-conf;
+      in
+      pkgs.pam.overrideAttrs (oldAttrs: {
+        postInstall = (oldAttrs.postInstall or "") + ''
+          cp ${multiseat-conf-file} $out/etc/security/namespace.d/multiseat.conf
+        '';
+      });
   };
 }
